@@ -1,7 +1,8 @@
+
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { House } from './types';
 import { houses as allHouses } from './data/houseData';
-import { HomeIcon, MapPinIcon, SearchIcon, BuildingIcon } from './components/icons';
+import { HomeIcon, MapPinIcon, SearchIcon, BuildingIcon, CrosshairIcon, DistanceIcon } from './components/icons';
 
 // Add a declaration for the Leaflet global object `L` from the CDN script
 declare var L: any;
@@ -11,6 +12,19 @@ const CloseIcon = ({ className }: { className?: string }) => (
         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
     </svg>
 );
+
+// Helper function to calculate distance between two coordinates
+const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Radius of the Earth in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+};
 
 // Child Component: MapPreview
 const MapPreview: React.FC<{ house: House }> = ({ house }) => {
@@ -32,13 +46,19 @@ const MapPreview: React.FC<{ house: House }> = ({ house }) => {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapInstance.current);
       L.marker([house.latitude, house.longitude]).addTo(mapInstance.current);
     }
+     return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
   }, [house.latitude, house.longitude]);
 
   return <div ref={mapRef} className="h-40 w-full" aria-label={`Map preview showing location of ${house.houseName}`}></div>;
 };
 
 // Child Component: HouseCard
-const HouseCard: React.FC<{ house: House; onViewMap: (house: House) => void }> = ({ house, onViewMap }) => (
+const HouseCard: React.FC<{ house: House & { distance?: number }; onViewMap: (house: House) => void }> = ({ house, onViewMap }) => (
   <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out flex flex-col">
     <MapPreview house={house} />
     <div className="p-6 flex-grow">
@@ -60,6 +80,12 @@ const HouseCard: React.FC<{ house: House; onViewMap: (house: House) => void }> =
           <BuildingIcon className="h-5 w-5 mr-2 text-teal-500" />
           <span>Island: <span className="font-semibold text-gray-700">{house.island}</span></span>
         </div>
+        {house.distance !== undefined && (
+          <div className="flex items-center text-sm text-gray-500">
+            <DistanceIcon className="h-5 w-5 mr-2 text-teal-500" />
+            <span>Distance: <span className="font-semibold text-gray-700">{house.distance.toFixed(2)} km</span></span>
+          </div>
+        )}
       </div>
     </div>
     <div className="px-6 pb-6 pt-0 mt-auto">
@@ -87,6 +113,8 @@ interface SearchFormProps {
   onIslandChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onNameChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSubmit: (e: React.FormEvent) => void;
+  onGetCurrentLocation: () => void;
+  locationStatus: 'idle' | 'loading' | 'error' | 'success';
 }
 
 const SearchForm: React.FC<SearchFormProps> = ({
@@ -98,9 +126,11 @@ const SearchForm: React.FC<SearchFormProps> = ({
   onAtollChange,
   onIslandChange,
   onNameChange,
-  onSubmit
+  onSubmit,
+  onGetCurrentLocation,
+  locationStatus
 }) => (
-  <form onSubmit={onSubmit} className="bg-white/80 backdrop-blur-sm p-6 md:p-8 rounded-2xl shadow-xl w-full max-w-4xl mx-auto space-y-4 md:space-y-0 md:grid md:grid-cols-4 md:gap-4 md:items-end">
+  <form onSubmit={onSubmit} className="bg-white/80 backdrop-blur-sm p-6 md:p-8 rounded-2xl shadow-xl w-full max-w-6xl mx-auto space-y-4 md:space-y-0 md:grid md:grid-cols-5 md:gap-4 md:items-end">
     <div className="col-span-4 md:col-span-1">
       <label htmlFor="atoll" className="block text-sm font-medium text-gray-700 mb-1">Atoll</label>
       <select id="atoll" value={selectedAtoll} onChange={onAtollChange} className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition">
@@ -120,6 +150,24 @@ const SearchForm: React.FC<SearchFormProps> = ({
       <input type="text" id="name" value={searchName} onChange={onNameChange} placeholder="e.g. Sunbeam" className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition" />
     </div>
     <div className="col-span-4 md:col-span-1">
+       <label className="block text-sm font-medium text-gray-700 mb-1 opacity-0 hidden md:block">Location</label>
+      <button
+        type="button"
+        onClick={onGetCurrentLocation}
+        disabled={locationStatus === 'loading'}
+        className="w-full bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 font-bold py-2 px-4 rounded-md shadow-sm flex items-center justify-center space-x-2 transition-transform transform hover:scale-105 disabled:opacity-50 disabled:cursor-wait"
+      >
+        <CrosshairIcon className={`h-5 w-5 ${locationStatus === 'success' ? 'text-green-500' : ''}`} />
+        <span>{
+          locationStatus === 'loading' ? 'Finding...' :
+          locationStatus === 'success' ? 'Located' :
+          locationStatus === 'error' ? 'Retry' :
+          'My Location'
+        }</span>
+      </button>
+    </div>
+    <div className="col-span-4 md:col-span-1">
+       <label className="block text-sm font-medium text-gray-700 mb-1 opacity-0 hidden md:block">Search</label>
       <button type="submit" className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-md shadow-md flex items-center justify-center space-x-2 transition-transform transform hover:scale-105">
         <SearchIcon className="h-5 w-5" />
         <span>Search</span>
@@ -129,20 +177,40 @@ const SearchForm: React.FC<SearchFormProps> = ({
 );
 
 // Child Component: MapModal
-const MapModal: React.FC<{ house: House; onClose: () => void }> = ({ house, onClose }) => {
+const MapModal: React.FC<{ house: House; onClose: () => void; userLocation: { lat: number; lng: number } | null }> = ({ house, onClose, userLocation }) => {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<any>(null);
 
     useEffect(() => {
         if (mapRef.current && !mapInstance.current) {
-            mapInstance.current = L.map(mapRef.current).setView([house.latitude, house.longitude], 16);
+            mapInstance.current = L.map(mapRef.current);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(mapInstance.current);
-            L.marker([house.latitude, house.longitude])
-                .addTo(mapInstance.current)
-                .bindPopup(`<b>${house.houseName}</b>`)
-                .openPopup();
+
+            const houseLatLng: [number, number] = [house.latitude, house.longitude];
+            
+            if (userLocation) {
+                const userLatLng: [number, number] = [userLocation.lat, userLocation.lng];
+                
+                const userIcon = L.divIcon({
+                    html: `<div class="w-3 h-3 bg-blue-500 rounded-full shadow-lg border-2 border-white"></div>`,
+                    className: '',
+                    iconSize: [12, 12],
+                    iconAnchor: [6, 6]
+                });
+                L.marker(userLatLng, { icon: userIcon }).addTo(mapInstance.current).bindPopup('Your Location');
+                
+                L.marker(houseLatLng).addTo(mapInstance.current).bindPopup(`<b>${house.houseName}</b>`).openPopup();
+                
+                L.polyline([userLatLng, houseLatLng], { color: '#0ea5e9', dashArray: '5, 10' }).addTo(mapInstance.current);
+                
+                const bounds = L.latLngBounds([userLatLng, houseLatLng]);
+                mapInstance.current.fitBounds(bounds.pad(0.2));
+            } else {
+                mapInstance.current.setView(houseLatLng, 16);
+                L.marker(houseLatLng).addTo(mapInstance.current).bindPopup(`<b>${house.houseName}</b>`).openPopup();
+            }
         }
 
         const handleEscape = (event: KeyboardEvent) => {
@@ -150,7 +218,6 @@ const MapModal: React.FC<{ house: House; onClose: () => void }> = ({ house, onCl
                 onClose();
             }
         };
-
         document.addEventListener('keydown', handleEscape);
 
         return () => {
@@ -160,7 +227,7 @@ const MapModal: React.FC<{ house: House; onClose: () => void }> = ({ house, onCl
                 mapInstance.current = null;
             }
         };
-    }, [house, onClose]);
+    }, [house, onClose, userLocation]);
 
     return (
         <div 
@@ -196,6 +263,8 @@ function App() {
   const [searchName, setSearchName] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
   const [mapHouse, setMapHouse] = useState<House | null>(null);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'error' | 'success'>('idle');
 
   const atolls = useMemo(() => {
     const atollSet = new Set(allHouses.map(house => house.atoll));
@@ -207,6 +276,18 @@ function App() {
     const islandSet = new Set(allHouses.filter(house => house.atoll === selectedAtoll).map(house => house.island));
     return Array.from(islandSet).sort();
   }, [selectedAtoll]);
+
+  const displayedHouses = useMemo(() => {
+    if (!userLocation) {
+      return filteredHouses;
+    }
+    return filteredHouses
+        .map(house => ({
+            ...house,
+            distance: getDistance(userLocation.lat, userLocation.lng, house.latitude, house.longitude),
+        }))
+        .sort((a, b) => a.distance - b.distance);
+  }, [filteredHouses, userLocation]);
 
   const handleAtollChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedAtoll(e.target.value);
@@ -228,6 +309,25 @@ function App() {
     setFilteredHouses(results);
     setHasSearched(true);
   }, [selectedAtoll, selectedIsland, searchName]);
+  
+  const handleGetCurrentLocation = () => {
+    if (!navigator.geolocation) {
+        setLocationStatus('error');
+        return;
+    }
+    setLocationStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            const { latitude, longitude } = position.coords;
+            setUserLocation({ lat: latitude, lng: longitude });
+            setLocationStatus('success');
+        },
+        () => {
+            setLocationStatus('error');
+        },
+        { enableHighAccuracy: true }
+    );
+  };
 
   const renderResults = () => {
     if (!hasSearched) {
@@ -237,7 +337,7 @@ function App() {
         </div>
       );
     }
-    if (filteredHouses.length === 0) {
+    if (displayedHouses.length === 0) {
       return (
         <div className="text-center text-gray-500 mt-16">
           <h3 className="text-2xl font-semibold text-gray-700">No Results Found</h3>
@@ -247,7 +347,7 @@ function App() {
     }
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 xl:gap-8">
-        {filteredHouses.map((house, index) => (
+        {displayedHouses.map((house, index) => (
           <HouseCard key={`${house.houseName}-${index}`} house={house} onViewMap={setMapHouse} />
         ))}
       </div>
@@ -256,7 +356,7 @@ function App() {
 
   return (
     <>
-      {mapHouse && <MapModal house={mapHouse} onClose={() => setMapHouse(null)} />}
+      {mapHouse && <MapModal house={mapHouse} onClose={() => setMapHouse(null)} userLocation={userLocation} />}
       <div className="min-h-screen bg-gradient-to-br from-cyan-50 to-blue-200 font-sans text-gray-800">
         <main className="container mx-auto px-4 py-8 md:py-12">
           <header className="text-center mb-8 md:mb-12">
@@ -281,6 +381,8 @@ function App() {
             onIslandChange={(e) => setSelectedIsland(e.target.value)}
             onNameChange={(e) => setSearchName(e.target.value)}
             onSubmit={handleSearch}
+            onGetCurrentLocation={handleGetCurrentLocation}
+            locationStatus={locationStatus}
           />
 
           <section className="mt-12">
