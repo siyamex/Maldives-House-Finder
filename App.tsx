@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { House } from './types';
 import { houses as allHouses } from './data/houseData';
@@ -177,57 +176,81 @@ const SearchForm: React.FC<SearchFormProps> = ({
 );
 
 // Child Component: MapModal
-const MapModal: React.FC<{ house: House; onClose: () => void; userLocation: { lat: number; lng: number } | null }> = ({ house, onClose, userLocation }) => {
+const MapModal: React.FC<{
+    house: House;
+    onClose: () => void;
+    userLocation: { lat: number; lng: number } | null;
+}> = ({ house, onClose, userLocation }) => {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<any>(null);
+    const featureGroupRef = useRef<any>(null);
 
+    // Effect for initializing and destroying the map
     useEffect(() => {
         if (mapRef.current && !mapInstance.current) {
-            mapInstance.current = L.map(mapRef.current);
+            const map = L.map(mapRef.current);
+            mapInstance.current = map;
+
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }).addTo(mapInstance.current);
+            }).addTo(map);
 
-            const houseLatLng: [number, number] = [house.latitude, house.longitude];
-            
-            if (userLocation) {
-                const userLatLng: [number, number] = [userLocation.lat, userLocation.lng];
-                
-                const userIcon = L.divIcon({
-                    html: `<div class="w-3 h-3 bg-blue-500 rounded-full shadow-lg border-2 border-white"></div>`,
-                    className: '',
-                    iconSize: [12, 12],
-                    iconAnchor: [6, 6]
-                });
-                L.marker(userLatLng, { icon: userIcon }).addTo(mapInstance.current).bindPopup('Your Location');
-                
-                L.marker(houseLatLng).addTo(mapInstance.current).bindPopup(`<b>${house.houseName}</b>`).openPopup();
-                
-                L.polyline([userLatLng, houseLatLng], { color: '#0ea5e9', dashArray: '5, 10' }).addTo(mapInstance.current);
-                
-                const bounds = L.latLngBounds([userLatLng, houseLatLng]);
-                mapInstance.current.fitBounds(bounds.pad(0.2));
-            } else {
-                mapInstance.current.setView(houseLatLng, 16);
-                L.marker(houseLatLng).addTo(mapInstance.current).bindPopup(`<b>${house.houseName}</b>`).openPopup();
-            }
+            const fg = L.featureGroup().addTo(map);
+            featureGroupRef.current = fg;
         }
 
+        return () => {
+            if (mapInstance.current) {
+                mapInstance.current.remove();
+                mapInstance.current = null;
+            }
+        };
+    }, []);
+
+    // Effect for updating map content when props change
+    useEffect(() => {
+        const map = mapInstance.current;
+        const featureGroup = featureGroupRef.current;
+        if (!map || !featureGroup) return;
+
+        featureGroup.clearLayers();
+
+        const houseLatLng: [number, number] = [house.latitude, house.longitude];
+        const houseMarker = L.marker(houseLatLng).bindPopup(`<b>${house.houseName}</b>`);
+        featureGroup.addLayer(houseMarker);
+
+        if (userLocation) {
+            const userLatLng: [number, number] = [userLocation.lat, userLocation.lng];
+            const userIcon = L.divIcon({
+                html: `<div class="w-3 h-3 bg-blue-500 rounded-full shadow-lg border-2 border-white"></div>`,
+                className: '', iconSize: [12, 12], iconAnchor: [6, 6]
+            });
+            const userMarker = L.marker(userLatLng, { icon: userIcon }).bindPopup('Your Location');
+            const path = L.polyline([userLatLng, houseLatLng], { color: '#0ea5e9', dashArray: '5, 10' });
+            
+            featureGroup.addLayer(userMarker);
+            featureGroup.addLayer(path);
+            
+            map.fitBounds(featureGroup.getBounds().pad(0.2));
+            houseMarker.openPopup();
+        } else {
+            map.setView(houseLatLng, 16);
+            houseMarker.openPopup();
+        }
+    }, [house, userLocation]);
+
+    // Effect for handling the Escape key to close the modal
+    useEffect(() => {
         const handleEscape = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
                 onClose();
             }
         };
         document.addEventListener('keydown', handleEscape);
-
         return () => {
             document.removeEventListener('keydown', handleEscape);
-            if (mapInstance.current) {
-                mapInstance.current.remove();
-                mapInstance.current = null;
-            }
         };
-    }, [house, onClose, userLocation]);
+    }, [onClose]);
 
     return (
         <div 
@@ -306,7 +329,7 @@ function App() {
     if (searchName.trim()) {
       results = results.filter(h => h.houseName.toLowerCase().includes(searchName.trim().toLowerCase()));
     }
-    setFilteredHouses(results);
+    setFilteredHouses(results.slice(0, 10));
     setHasSearched(true);
   }, [selectedAtoll, selectedIsland, searchName]);
   
@@ -356,7 +379,11 @@ function App() {
 
   return (
     <>
-      {mapHouse && <MapModal house={mapHouse} onClose={() => setMapHouse(null)} userLocation={userLocation} />}
+      {mapHouse && <MapModal 
+        house={mapHouse} 
+        onClose={() => setMapHouse(null)} 
+        userLocation={userLocation}
+      />}
       <div className="min-h-screen bg-gradient-to-br from-cyan-50 to-blue-200 font-sans text-gray-800">
         <main className="container mx-auto px-4 py-8 md:py-12">
           <header className="text-center mb-8 md:mb-12">
