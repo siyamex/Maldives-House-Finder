@@ -289,16 +289,13 @@ function App() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'error' | 'success'>('idle');
 
-  const atolls = useMemo(() => {
-    const atollSet = new Set(allHouses.map(house => house.atoll));
-    return Array.from(atollSet).sort();
-  }, []);
+  // Generate atolls list directly. This ensures it's always up-to-date with the imported data.
+  const atolls = Array.from(new Set(allHouses.map(house => house.atoll))).sort();
 
-  const islands = useMemo(() => {
-    if (!selectedAtoll) return [];
-    const islandSet = new Set(allHouses.filter(house => house.atoll === selectedAtoll).map(house => house.island));
-    return Array.from(islandSet).sort();
-  }, [selectedAtoll]);
+  // Generate islands list based on the selected atoll.
+  const islands = selectedAtoll
+    ? Array.from(new Set(allHouses.filter(house => house.atoll === selectedAtoll).map(house => house.island))).sort()
+    : [];
 
   const displayedHouses = useMemo(() => {
     if (!userLocation) {
