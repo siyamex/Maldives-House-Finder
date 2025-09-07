@@ -1,0 +1,5 @@
+{
+  "name": "Maldives House Finder",
+  "description": "An application to locate any house in the Maldives by filtering through Atolls and Islands, and searching by house name, based on provided data.",
+  "requestFramePermissions": []
+}
